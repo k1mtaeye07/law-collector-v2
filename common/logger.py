@@ -39,7 +39,7 @@ class JobLogger:
         with open(self.final_fail_log, 'w', encoding='utf-8') as f:
             f.write(f'# 총 실패: {len(fail_list)}건 | 소요시간: {elapsed}\n')
             for meta in fail_list:
-                f.write(meta.get('link', str(meta)) + '\n')
+                f.write(meta.get('url_path_nm', str(meta)) + '\n')
 
     def info(self, msg: str):
         self._logger.info(msg)

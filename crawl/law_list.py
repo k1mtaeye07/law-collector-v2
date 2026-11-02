@@ -12,8 +12,8 @@ from common.xml_parser import parse_xml_string, get_list_tag_value
 LAW_TG = 'eflaw'
 
 HEADERS = [
-    'LAW_ENFC_ID', 'LAW_SRNO', 'LAW_ID', 'ENTRVS_DVS_CD', 'ENTRVS_DVS_NM',
-    'PRMLGT_YMD', 'PRMLGT_NO', 'LAW_HAN_NM', 'ENFC_YMD', 'CRNT_LAW_NM', 'LINK',
+    'LAW_ENFC_ID', 'LAW_SEQ', 'LAW_ID', 'ENTRVS_DVS_CD', 'ENTRVS_DVS_NM',
+    'PRMLGT_YMD', 'PRMLGT_NO', 'LAW_KOR_NM', 'ENFC_YMD', 'CRNT_LAW_NM', 'URL_PATH_NM',
 ]
 
 ENTRVS_DVS_CD_MAP = {
@@ -36,9 +36,9 @@ def _call_api(url: str, verify_ssl: bool = True) -> object:
     return parse_xml_string(resp.content)
 
 
-def _adjust_url(detail_url: str, base_url: str) -> str:
+def _adjust_url(url: str, base_url: str) -> str:
     """법령상세링크(상대경로)를 api_con_path 기반 절대 URL로 변환."""
-    url = re.sub(r'^/DRF/lawService\.do', base_url, detail_url)
+    url = re.sub(r'^/DRF/lawService\.do', base_url, url)
     url = url.replace('type=HTML', 'type=XML')
     url = re.sub(r'&mobileYn=[^&]*', '', url)
     return url
@@ -94,26 +94,26 @@ def run(cfg: dict, ymd: str, logger: JobLogger):
                 continue
 
             for law_el in page_doc.findall('.//law'):
-                detail_url = get_list_tag_value(law_el, '법령상세링크') or ''
-                detail_url = _adjust_url(detail_url, con_base_url)
+                url_path_nm = get_list_tag_value(law_el, '법령상세링크') or ''
+                url_path_nm = _adjust_url(url_path_nm, con_base_url)
 
-                law_srno    = get_list_tag_value(law_el, '법령일련번호') or ''
+                law_seq     = get_list_tag_value(law_el, '법령일련번호') or ''
                 law_id      = get_list_tag_value(law_el, '법령ID') or ''
                 enfc_ymd    = get_list_tag_value(law_el, '시행일자') or ''
-                law_han_nm  = get_list_tag_value(law_el, '법령명한글') or ''
+                law_kor_nm  = get_list_tag_value(law_el, '법령명한글') or ''
                 prmlgt_no   = get_list_tag_value(law_el, '공포번호') or ''
                 prmlgt_ymd  = get_list_tag_value(law_el, '공포일자') or ''
-                entrvs_nm   = get_list_tag_value(law_el, '제개정구분명') or ''
+                entrvs_dvs_nm = get_list_tag_value(law_el, '제개정구분명') or ''
                 crnt_law_nm = get_list_tag_value(law_el, '현행연혁코드') or ''
 
-                entrvs_cd = ENTRVS_DVS_CD_MAP.get(entrvs_nm, '')
-                law_enfc_id = f'{law_srno}{enfc_ymd}'   # 법령일련번호+시행일자 (구분자 없음)
+                entrvs_dvs_cd = ENTRVS_DVS_CD_MAP.get(entrvs_dvs_nm, '')
+                law_enfc_id = f'{law_seq}{enfc_ymd}'   # 법령일련번호+시행일자 (구분자 없음)
 
                 if law_enfc_id not in seen:
                     seen.add(law_enfc_id)
                     writer.put([
-                        law_enfc_id, law_srno, law_id, entrvs_cd, entrvs_nm,
-                        prmlgt_ymd, prmlgt_no, law_han_nm, enfc_ymd, crnt_law_nm, detail_url,
+                        law_enfc_id, law_seq, law_id, entrvs_dvs_cd, entrvs_dvs_nm,
+                        prmlgt_ymd, prmlgt_no, law_kor_nm, enfc_ymd, crnt_law_nm, url_path_nm,
                     ])
 
             pbar.update(1)

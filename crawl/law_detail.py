@@ -50,14 +50,14 @@ def load_metas(csv_dir: Path) -> list:
         with open(f, 'r', encoding='utf-8') as fp:
             reader = csv.DictReader(fp)
             for row in reader:
-                link = row.get('LINK', '').strip()
-                if link:
+                url_path_nm = row.get('URL_PATH_NM', '').strip()
+                if url_path_nm:
                     metas.append({
-                        'link':        link,
-                        'law_srno':    row.get('LAW_SRNO', '').strip(),
-                        'crnt_law_nm': row.get('CRNT_LAW_NM', '').strip(),
-                        'entrvs_cd':   row.get('ENTRVS_DVS_CD', '').strip(),
-                        'entrvs_nm':   row.get('ENTRVS_DVS_NM', '').strip(),
+                        'url_path_nm':   url_path_nm,
+                        'law_seq':       row.get('LAW_SEQ', '').strip(),
+                        'crnt_law_nm':   row.get('CRNT_LAW_NM', '').strip(),
+                        'entrvs_dvs_cd': row.get('ENTRVS_DVS_CD', '').strip(),
+                        'entrvs_dvs_nm': row.get('ENTRVS_DVS_NM', '').strip(),
                     })
     return metas
 
@@ -72,7 +72,7 @@ def _supp_prov(root, prmlgt_ymd: str, prmlgt_no: str) -> dict:
     """법령의 공포일자/공포번호와 일치하는 부칙단위. 없으면 마지막 부칙단위 (지침 4.5)"""
     units = root.findall('.//부칙단위')
     if not units:
-        return {'ctxt': '', 'ymd': '', 'no': '', 'matched': True}
+        return {'supp_prov_ctxt': '', 'supp_prov_prmlgt_ymd': '', 'supp_prov_prmlgt_no': '', 'matched': True}
     picked, matched = units[-1], False
     for u in units:
         # 부칙공포번호는 0패딩(예: 08761)으로 오므로 앞자리 0 제거 후 비교
@@ -80,35 +80,35 @@ def _supp_prov(root, prmlgt_ymd: str, prmlgt_no: str) -> dict:
             picked, matched = u, True
             break
     return {
-        'ctxt':    _raw_text(picked, '부칙내용'),
-        'ymd':     get_tag_value(picked, '부칙공포일자'),
-        'no':      get_tag_value(picked, '부칙공포번호'),
+        'supp_prov_ctxt':       _raw_text(picked, '부칙내용'),
+        'supp_prov_prmlgt_ymd': get_tag_value(picked, '부칙공포일자'),
+        'supp_prov_prmlgt_no':  get_tag_value(picked, '부칙공포번호'),
         'matched': matched,
     }
 
 
 def _base(root, meta: dict) -> dict:
     law_type = get_tag_attr_and_value(root, '법종구분', '법종구분코드')
-    law_srno = meta['law_srno']
-    if not law_srno:                         # --test-urls 모드: URL 의 MST 값 사용
-        m = re.search(r'MST=(\d+)', meta['link'])
-        law_srno = m.group(1) if m else ''
+    law_seq = meta['law_seq']
+    if not law_seq:                         # --test-urls 모드: URL 의 MST 값 사용
+        m = re.search(r'MST=(\d+)', meta['url_path_nm'])
+        law_seq = m.group(1) if m else ''
     b = {
         'law_id':        get_tag_value(root, '법령ID'),
-        'law_srno':      law_srno,
+        'law_seq':       law_seq,
         'prmlgt_ymd':    get_tag_value(root, '공포일자'),
         'prmlgt_no':     get_tag_value(root, '공포번호'),
-        'law_han_nm':    get_tag_value(root, '법령명_한글'),
+        'law_kor_nm':    get_tag_value(root, '법령명_한글'),
         'law_abrvtd_nm': get_tag_value(root, '법령명약칭'),
         'enfc_ymd':      get_tag_value(root, '시행일자'),
         'crnt_law_nm':   meta['crnt_law_nm'],
         'law_dvs_cd_nm': law_type['text'],
-        'entrvs_cd':     meta.get('entrvs_cd', ''),
-        'entrvs_nm':     meta.get('entrvs_nm', ''),
-        'link':          meta['link'],
-        'amnd_rsn':      _raw_text(root, '제개정이유내용'),
+        'entrvs_dvs_cd': meta.get('entrvs_dvs_cd', ''),
+        'entrvs_dvs_nm': meta.get('entrvs_dvs_nm', ''),
+        'url_path_nm':   meta['url_path_nm'],
+        'amnd_rsn_ctxt': _raw_text(root, '제개정이유내용'),
     }
-    b['law_enfc_id'] = f"{b['law_srno']}{b['enfc_ymd']}"      # 법령일련번호+시행일자 (구분자 없음)
+    b['law_enfc_id'] = f"{b['law_seq']}{b['enfc_ymd']}"      # 법령일련번호+시행일자 (구분자 없음)
     b['supp'] = _supp_prov(root, b['prmlgt_ymd'], b['prmlgt_no'])
     return b
 
@@ -140,26 +140,26 @@ def parse_law_bas(root, b: dict):
         return None
 
     jb = []
-    jomun_dvs_nm = ''
+    atcl_dvs_nm = ''                         # 첫 조문단위의 조문여부 (전문/조문)
     for jomun in jomun_list:
         jomun_con = get_tag(jomun, '조문내용')
         if not jomun_con:
             continue
 
         jomun_yn = get_tag(jomun, '조문여부')
-        if not jomun_dvs_nm and jomun_yn:
-            jomun_dvs_nm = jomun_yn
+        if not atcl_dvs_nm and jomun_yn:
+            atcl_dvs_nm = jomun_yn
 
         jb.append(jomun_con)                 # v2: 장·절 제목(전문)도 본문에 남김 (지침 4.1)
         if jomun_yn == '조문':
             jb.extend(_build_hang_ho_mok(jomun))
-    ctxt = '\n'.join(jb)
+    law_ctxt = '\n'.join(jb)
 
     return [
-        b['law_enfc_id'], b['law_srno'], b['enfc_ymd'], b['law_id'],
-        b['entrvs_cd'], b['entrvs_nm'], b['prmlgt_ymd'], b['prmlgt_no'],
-        b['crnt_law_nm'], b['link'], jomun_dvs_nm, ctxt,
-        b['law_dvs_cd_nm'], b['law_han_nm'], b['law_abrvtd_nm'],
+        b['law_enfc_id'], b['law_seq'], b['enfc_ymd'], b['law_id'],
+        b['entrvs_dvs_cd'], b['entrvs_dvs_nm'], b['prmlgt_ymd'], b['prmlgt_no'],
+        b['crnt_law_nm'], b['url_path_nm'], atcl_dvs_nm, law_ctxt,
+        b['law_dvs_cd_nm'], b['law_kor_nm'], b['law_abrvtd_nm'],
     ]
 
 
@@ -186,32 +186,32 @@ def parse_law_atcl(root, b: dict) -> list:
         jomun_title  = f'({jomun_title})' if jomun_title else ''
         jomun_ref    = get_tag(jomun, '조문참고자료')   # [본조신설 ..] [제목개정 ..] 등. 본문엔 미포함, 태그 추출에만 사용
 
-        brch_no = make_brch_no(jomun_no, jomun_ser_no)
+        law_brch_no = make_brch_no(jomun_no, jomun_ser_no)
         jo_con_no = (f'제{jomun_no}조의{jomun_ser_no}' if jomun_ser_no else f'제{jomun_no}조') if jomun_no and jomun_no != '0' else ''
 
         if jomun_yn == '조문':
-            ctxt = '\n'.join([jomun_con] + _build_hang_ho_mok(jomun))
-            result.setdefault(brch_no, {
-                'ATCL_NO': int(brch_no[:4]), 'ATCL_DVS_NM': jomun_yn,
-                'TITLE': ' '.join(filter(None, [b['law_han_nm'], jo_con_no, jomun_title])),
-                'CTXT': ctxt, 'CHG_YN': jomun_chg_yn, 'REF': jomun_ref,
+            atcl_ctxt = '\n'.join([jomun_con] + _build_hang_ho_mok(jomun))
+            result.setdefault(law_brch_no, {
+                'atcl_no': int(law_brch_no[:4]), 'atcl_dvs_nm': jomun_yn,
+                'atcl_title': ' '.join(filter(None, [b['law_kor_nm'], jo_con_no, jomun_title])),
+                'atcl_ctxt': atcl_ctxt, 'atcl_chg_yn': jomun_chg_yn, 'jomun_ref': jomun_ref,
             })
         elif len(jomun_list) == 1:           # v1 동일: 조문단위 1개뿐인 법령은 0000000 으로 적재
             result.setdefault('0000000', {
-                'ATCL_NO': 0, 'ATCL_DVS_NM': jomun_yn,
-                'TITLE': b['law_han_nm'],
-                'CTXT': jomun_con, 'CHG_YN': jomun_chg_yn, 'REF': jomun_ref,
+                'atcl_no': 0, 'atcl_dvs_nm': jomun_yn,
+                'atcl_title': b['law_kor_nm'],
+                'atcl_ctxt': jomun_con, 'atcl_chg_yn': jomun_chg_yn, 'jomun_ref': jomun_ref,
             })
 
     sp = b['supp']
     rows = []
-    for brch_no, rd in result.items():
-        amnd_ymd, amnd_typ = extract_amnd_info(rd['CTXT'] + '\n' + rd['REF'])
+    for law_brch_no, rd in result.items():
+        amnd_ymd, amnd_typ_nm = extract_amnd_info(rd['atcl_ctxt'] + '\n' + rd['jomun_ref'])
         rows.append([
-            b['law_enfc_id'], brch_no, b['law_srno'], b['enfc_ymd'], b['law_id'], rd['ATCL_NO'],
-            rd['TITLE'], rd['CTXT'], ctxt_hash(rd['CTXT']), b['amnd_rsn'], rd['ATCL_DVS_NM'],
-            rd['CHG_YN'], sp['ctxt'], sp['ymd'], sp['no'],
-            amnd_ymd, amnd_typ,
+            b['law_enfc_id'], law_brch_no, b['law_seq'], b['enfc_ymd'], b['law_id'], rd['atcl_no'],
+            rd['atcl_title'], rd['atcl_ctxt'], ctxt_hash(rd['atcl_ctxt']), b['amnd_rsn_ctxt'], rd['atcl_dvs_nm'],
+            rd['atcl_chg_yn'], sp['supp_prov_ctxt'], sp['supp_prov_prmlgt_ymd'], sp['supp_prov_prmlgt_no'],
+            amnd_ymd, amnd_typ_nm,
         ])
     return rows
 
@@ -236,15 +236,15 @@ def parse_law_para(root, b: dict) -> list:
         jomun_title  = f'({jomun_title})' if jomun_title else ''
         jomun_ref    = get_tag(jomun, '조문참고자료')   # [본조신설 ..] [제목개정 ..] 등. 본문엔 미포함, 태그 추출에만 사용
 
-        brch_no = make_brch_no(jomun_no, jomun_ser_no)
+        law_brch_no = make_brch_no(jomun_no, jomun_ser_no)
         jo_con_no = (f'제{jomun_no}조의{jomun_ser_no}' if jomun_ser_no else f'제{jomun_no}조') if jomun_no and jomun_no != '0' else ''
 
-        def _process_hangs(hang_list, brch_no_val, atcl_no_val, jo_con_no_val):
+        def _process_hangs(hang_list, law_brch_no_val, atcl_no_val, jo_con_no_val):
             for hang_el in hang_list:
-                hang_no = convert_circled_number(get_tag(hang_el, '항번호')).strip()
-                if not hang_no or not hang_no.isdigit():
+                para_no = convert_circled_number(get_tag(hang_el, '항번호')).strip()
+                if not para_no or not para_no.isdigit():
                     continue                 # 항번호 없는 항은 적재하지 않음 (지침 4.7, v1 동일)
-                hang_no_nm = f'제{hang_no}항' if hang_no != '0' else ''
+                para_no_nm = f'제{para_no}항' if para_no != '0' else ''
 
                 all_hang = []
                 hang_con = get_tag(hang_el, '항내용').strip()
@@ -260,29 +260,29 @@ def parse_law_para(root, b: dict) -> list:
                             all_hang.append(mok_con.strip())
 
                 own = '\n'.join(all_hang)   # 항 자체 본문 (해시 기준)
-                ctxt = '\r\n'.join(filter(None, [jomun_con, own]))
-                result.setdefault((brch_no_val, int(hang_no)), {
-                    'ATCL_NO': atcl_no_val,
-                    'TITLE': ' '.join(filter(None, [b['law_han_nm'], jo_con_no_val, hang_no_nm, jomun_title])),
-                    'CTXT': ctxt, 'HSID': ctxt_hash(own),
-                    'CHG_YN': jomun_chg_yn, 'REF': jomun_ref,
+                para_ctxt = '\r\n'.join(filter(None, [jomun_con, own]))
+                result.setdefault((law_brch_no_val, int(para_no)), {
+                    'atcl_no': atcl_no_val,
+                    'para_title': ' '.join(filter(None, [b['law_kor_nm'], jo_con_no_val, para_no_nm, jomun_title])),
+                    'para_ctxt': para_ctxt, 'para_ctxt_hsid': ctxt_hash(own),
+                    'atcl_chg_yn': jomun_chg_yn, 'jomun_ref': jomun_ref,
                 })
 
         hang_list = jomun.findall('.//항')
         if jomun_yn == '조문':
-            _process_hangs(hang_list, brch_no, int(brch_no[:4]), jo_con_no)
+            _process_hangs(hang_list, law_brch_no, int(law_brch_no[:4]), jo_con_no)
         elif len(jomun_list) == 1:
             _process_hangs(hang_list, '0000000', 0, '')
 
     sp = b['supp']
     rows = []
-    for (brch_no, para_no), rd in result.items():
-        amnd_ymd, amnd_typ = extract_amnd_info(rd['CTXT'] + '\n' + rd['REF'])
+    for (law_brch_no, para_no), rd in result.items():
+        amnd_ymd, amnd_typ_nm = extract_amnd_info(rd['para_ctxt'] + '\n' + rd['jomun_ref'])
         rows.append([
-            b['law_enfc_id'], brch_no, para_no, b['law_srno'], b['enfc_ymd'], b['law_id'], rd['ATCL_NO'],
-            rd['TITLE'], rd['CTXT'], rd['HSID'], b['amnd_rsn'], rd['CHG_YN'],
-            sp['ctxt'], sp['ymd'], sp['no'],
-            amnd_ymd, amnd_typ,
+            b['law_enfc_id'], law_brch_no, para_no, b['law_seq'], b['enfc_ymd'], b['law_id'], rd['atcl_no'],
+            rd['para_title'], rd['para_ctxt'], rd['para_ctxt_hsid'], b['amnd_rsn_ctxt'], rd['atcl_chg_yn'],
+            sp['supp_prov_ctxt'], sp['supp_prov_prmlgt_ymd'], sp['supp_prov_prmlgt_no'],
+            amnd_ymd, amnd_typ_nm,
         ])
     return rows
 
@@ -293,7 +293,7 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
     csv_dir.mkdir(parents=True, exist_ok=True)
 
     if test_urls:
-        metas = [{'link': u, 'law_srno': '', 'crnt_law_nm': '', 'entrvs_cd': '', 'entrvs_nm': ''} for u in test_urls]
+        metas = [{'url_path_nm': u, 'law_seq': '', 'crnt_law_nm': '', 'entrvs_dvs_cd': '', 'entrvs_dvs_nm': ''} for u in test_urls]
         logger.info(f'[law_detail] 테스트 URL {len(metas)}건 지정')
     else:
         try:
@@ -343,7 +343,7 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
                     except asyncio.QueueEmpty:
                         break
                     try:
-                        root = await _fetch_and_parse(meta['link'])
+                        root = await _fetch_and_parse(meta['url_path_nm'])
 
                         b = _base(root, meta)
                         bas_row   = parse_law_bas(root, b)
@@ -368,7 +368,7 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
 
                     except Exception as exc:
                         fail_list.append(meta)
-                        logger.log_link_fail(meta['link'], str(exc), done_count, total)
+                        logger.log_link_fail(meta['url_path_nm'], str(exc), done_count, total)
                     finally:
                         done_count += 1
                         pbar.update(1)
