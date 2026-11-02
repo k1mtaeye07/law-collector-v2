@@ -1,0 +1,15 @@
+batch_size: 1000000     # CSV 1개당 최대 행 수 (초과 시 다음 파일로 분할)
+concurrency: 50         # 본문 동시 요청 수
+
+# 환경명(dev/stg/law/prod) 아래에 서버별 설정. 실행: python main.py <명령> <환경명>
+stg:
+  api_list_url: "https://www.law.go.kr/DRF/lawSearch.do?OC=발급ID&type=XML&target="
+  api_con_path: "https://www.law.go.kr/DRF/lawService.do"
+  csv_path: "/data/law-collector-v2/csv"
+  logs_path: "/data/law-collector-v2/logs"
+  db:
+    host: "localhost"
+    port: 20007
+    dbname: "INTG_STO_AI"
+    user: "user"
+    password: "CHANGEME"
