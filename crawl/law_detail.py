@@ -5,6 +5,7 @@ import csv
 import re
 import sys
 import time
+import traceback
 from pathlib import Path
 
 from tenacity import retry, stop_after_attempt, wait_random_exponential, retry_if_exception_type
@@ -287,6 +288,10 @@ def parse_law_para(root, b: dict) -> list:
     return rows
 
 
+PROGRESS_SEC = 60                # 진행 로그 간격 (초)
+MAX_CONSECUTIVE_FAIL = 500       # 연속 실패가 이만큼 쌓이면 중단 (코드 오류·API 차단 시 전체를 헛돌지 않도록)
+
+
 # ── 메인 실행 ────────────────────────────────────────────────────────────────
 async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
     csv_dir = Path(cfg['csv_path']) / ymd
@@ -300,7 +305,7 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
             metas = load_metas(csv_dir)
         except Exception as exc:
             logger.error(f'[law_detail] law_list CSV 로드 실패: {exc}')
-            return
+            raise
         logger.info(f'[law_detail] 대상 URL: {len(metas)}건')
     total = len(metas)
 
@@ -313,7 +318,11 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
     fail_list = []
     supp_fallback = []                       # 부칙 공포번호 매칭 실패 → 마지막 부칙단위 사용한 법령
     done_count = 0
+    consecutive_fail = 0
+    seen_error_types = set()                 # 에러 종류별 첫 발생만 Traceback 기록
+    aborted = False
     start_time = time.time()
+    last_log_time = start_time
 
     async with make_async_client(verify_ssl=(cfg['env'] != 'dev')) as client:
 
@@ -331,13 +340,19 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
             q.put_nowait(m)
 
         seen = {'tb_law_bas': set(), 'tb_law_atcl_bas': set(), 'tb_law_para_bas': set()}
-        logged_pct: set = set()
-        # 백그라운드(nohup) 실행 시 진행바 끔 → 10% 단위 로그만 남김
+        # 백그라운드(nohup) 실행 시 진행바 끔 → PROGRESS_SEC 마다 진행 로그
         with tqdm(total=total, desc='[law_detail]', unit='건', disable=not sys.stderr.isatty()) as pbar:
 
+            def _log_progress():
+                elapsed_sec = time.time() - start_time
+                rate = done_count / elapsed_sec if elapsed_sec else 0
+                remain = fmt_elapsed((total - done_count) / rate) if rate else '-'
+                logger.info(f'[law_detail] 진행: {done_count:,}/{total:,}건 ({done_count * 100 / total:.1f}%) '
+                            f'| 실패: {len(fail_list):,}건 | {rate:.1f}건/초 | 남은 예상: {remain}')
+
             async def worker():
-                nonlocal done_count
-                while True:
+                nonlocal done_count, consecutive_fail, aborted, last_log_time
+                while not aborted:
                     try:
                         meta = q.get_nowait()
                     except asyncio.QueueEmpty:
@@ -366,17 +381,25 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
                                 seen['tb_law_para_bas'].add(key)
                                 writers['tb_law_para_bas'].put(r)
 
+                        consecutive_fail = 0
+
                     except Exception as exc:
                         fail_list.append(meta)
-                        logger.log_link_fail(meta['url_path_nm'], str(exc), done_count, total)
+                        consecutive_fail += 1
+                        logger.log_link_fail(meta['url_path_nm'], f'{type(exc).__name__}: {exc}', done_count, total)
+                        if type(exc).__name__ not in seen_error_types:        # 에러 위치(파일·줄번호) 확인용
+                            seen_error_types.add(type(exc).__name__)
+                            logger.error(f'[law_detail] 첫 {type(exc).__name__} 발생 ({meta["url_path_nm"]})\n{traceback.format_exc()}')
+                        if consecutive_fail >= MAX_CONSECUTIVE_FAIL and not aborted:
+                            aborted = True
+                            logger.error(f'[law_detail] 연속 실패 {consecutive_fail}건 → 수집 중단 (위 Traceback 확인)')
                     finally:
                         done_count += 1
                         pbar.update(1)
                         pbar.set_postfix({'실패': len(fail_list)})
-                        milestone = (done_count * 100 // total) // 10 * 10
-                        if milestone and milestone not in logged_pct:
-                            logged_pct.add(milestone)
-                            logger.info(f'[law_detail] 진행: {done_count:,}/{total:,}건 ({milestone}%) | 실패: {len(fail_list)}건')
+                        if time.time() - last_log_time >= PROGRESS_SEC:
+                            last_log_time = time.time()
+                            _log_progress()
 
             await asyncio.gather(*[worker() for _ in range(cfg['concurrency'])])
 
@@ -387,6 +410,8 @@ async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
 
     if fail_list:
         logger.save_final_fails(fail_list, elapsed)
+    if aborted:                              # 예외로 종료 → all 실행 시 load 로 넘어가지 않음
+        raise RuntimeError(f'[law_detail] 연속 실패로 중단 ({done_count:,}/{total:,}건 처리, 실패 {len(fail_list):,}건)')
 
     if supp_fallback:
         logger.warning(f'[law_detail] 부칙 공포번호 매칭 실패 → 마지막 부칙단위 사용: {len(supp_fallback):,}건 (예: {supp_fallback[:5]})')
