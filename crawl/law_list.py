@@ -44,7 +44,8 @@ def _adjust_url(url: str, base_url: str) -> str:
     return url
 
 
-def run(cfg: dict, ymd: str, logger: JobLogger):
+def run(cfg: dict, ymd: str, logger: JobLogger, efyd: str = None):
+    """efyd 지정 시 시행일자 범위(YYYYMMDD~YYYYMMDD)에 해당하는 연혁만 조회 (증분 수집)"""
     api_list_url = cfg['api_list_url']
     api_con_path = cfg['api_con_path']
     verify_ssl = (cfg['env'] != 'dev')
@@ -61,6 +62,8 @@ def run(cfg: dict, ymd: str, logger: JobLogger):
         base_url = f"{api_list_url}{LAW_TG}&nw=1,3"
     else:
         base_url = f"{api_list_url}&nw=1,3"
+    if efyd:
+        base_url += f'&efYd={efyd}'
     logger.info(f'[law_list] 목록 조회 시작: {base_url}')
 
     # 1. 총 건수 조회
@@ -69,12 +72,11 @@ def run(cfg: dict, ymd: str, logger: JobLogger):
     except Exception as exc:
         logger.error(f'[law_list] totalCnt 조회 실패: {exc}')
         writer.close()
-        return
+        raise
     total_cnt_el = doc.find('.//totalCnt')
     if total_cnt_el is None:
-        logger.info('[law_list] totalCnt 없음 → 수집 종료')
         writer.close()
-        return
+        raise RuntimeError('[law_list] 응답에 totalCnt 없음 → 수집 중단')
 
     total_cnt = int(total_cnt_el.text.strip())
     total_pages = (total_cnt // 100) + 1
@@ -83,6 +85,7 @@ def run(cfg: dict, ymd: str, logger: JobLogger):
     # 2. 페이지 순회
     seen: set = set()
     logged_pct: set = set()
+    fail_pages = []
     with tqdm(total=total_pages, desc='[law_list]', unit='page') as pbar:
         for page in range(1, total_pages + 1):
             page_url = f'{base_url}&page={page}&display=100'
@@ -90,6 +93,7 @@ def run(cfg: dict, ymd: str, logger: JobLogger):
                 page_doc = _call_api(page_url, verify_ssl)
             except Exception as e:
                 logger.warning(f'[law_list] page={page} 오류: {e}')
+                fail_pages.append(page)
                 pbar.update(1)
                 continue
 
@@ -123,4 +127,6 @@ def run(cfg: dict, ymd: str, logger: JobLogger):
                 logger.info(f'[law_list] 진행: {page}/{total_pages}page ({milestone}%) | 수집: {writer.total_rows:,}건')
 
     writer.close()
+    if fail_pages:   # 목록이 빠지면 그 법령은 수집 실패로도 안 남음 → 중단 (전체 수집 시 TRUNCATE 로 유실 방지)
+        raise RuntimeError(f'[law_list] 목록 페이지 조회 실패 {len(fail_pages)}건 {fail_pages[:20]} → 수집 중단')
     logger.info(f'[law_list] 완료 | 수집: {writer.total_rows}건 | CSV: {writer.file_count}개')

@@ -101,7 +101,7 @@ class CsvWriter:
                     break
                 # normalize newlines in each field
                 normalized = [
-                    v.replace('\r\n', '\n').replace('\r', '\n') if isinstance(v, str) else (v or '')
+                    v.replace('\r\n', '\n').replace('\r', '\n') if isinstance(v, str) else ('' if v is None else v)
                     for v in row
                 ]
                 self._writer.writerow(normalized)

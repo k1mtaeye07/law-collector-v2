@@ -7,14 +7,28 @@
 
 ```
 cp config.yml.sample config.yml          # 환경별 값 수정
-python main.py law_list   <env>          # 법령 목록 → law_list CSV
-python main.py law_detail <env>          # 법령 본문 → tb_law_bas / tb_law_atcl_bas / tb_law_para_bas CSV
-python main.py load       <env> [--ymd YYYYMMDD]   # CSV → DB (기본: 오늘 CSV)
-python main.py all        <env>          # DB점검 → law_list → law_detail → load
+python main.py all        <env>                              # 전체: DB점검 → law_list → law_detail → load full
+python main.py incr       <env> --efyd YYYYMMDD~YYYYMMDD     # 증분: 시행일자 범위의 연혁만 수집 → load incr
+python main.py law_list   <env> [--efyd YYYYMMDD~YYYYMMDD]   # 법령 목록 → law_list CSV
+python main.py law_detail <env>                              # 법령 본문 → tb_law_* CSV (+ 수집실패 CSV)
+python main.py load       <env> --mode full|incr [--ymd YYYYMMDD]   # CSV → DB (기본: 오늘 CSV)
 
 # 백그라운드 실행 (터미널 끊겨도 계속)
 nohup python3 main.py all <env> > all_$(date +%Y%m%d_%H%M).out 2>&1 &
 ```
+
+### 운영 스케줄 (crontab 예시, 경로는 서버에 맞게)
+
+일~금은 증분(전날~당일 시행분), 토요일 새벽은 전체. crontab 안에서는 `%` 를 `\%` 로 써야 한다.
+
+```
+# 일~금 23:30 증분
+30 23 * * 0-5  cd /설치경로 && python3 main.py incr stg --efyd $(date -d yesterday +\%Y\%m\%d)~$(date +\%Y\%m\%d) > logs/incr_$(date +\%Y\%m\%d).out 2>&1
+# 토 01:00 전체 (금→토 넘어간 새벽)
+0 1 * * 6      cd /설치경로 && python3 main.py all stg > logs/all_$(date +\%Y\%m\%d).out 2>&1
+```
+
+금요일 증분이 끝나기 전에 토요일 전체가 시작되지 않도록 간격을 둔다.
 
 - 출력: `{csv_path}/{실행일}/*.csv`, 로그: `{logs_path}/{실행일}/`
 - 필요 패키지: httpx, tenacity, tqdm, pyyaml, psycopg2 (lxml 있으면 사용)
@@ -40,19 +54,29 @@ common/              config, 로거, CSV writer, HTTP, XML 파싱, 해시·태�
 | tb_law_para_bas | law_enfc_id, law_brch_no, para_no | 항 |
 | tb_law_atcl_amnd_hst | law_atcl_hsid | 조 개정이력 |
 | tb_law_para_amnd_hst | law_para_hsid | 항 개정이력 |
+| tb_law_clct_fail_hst | clct_fail_sn | 본문 수집 실패 이력 (DDL: `db/ddl/tb_law_clct_fail_hst.sql`, 명칭은 DBA 확정 필요) |
 
 공통 컬럼: inpt_pgm_id, inpt_dt, chg_pgm_id, chg_dt (프로그램ID = DB에 쓰는 파일명, 확장자 제외. 예: load_csv)
 
 ## 적재 (load_csv.py, 단일 트랜잭션)
 
 1. CSV → 임시테이블
-2. anomaly: 같은 PK인데 이번 수집 본문해시 ≠ DB 저장값 → 이력 insert (bas 갱신 전)
-3. bas UPSERT: 신규 insert, 값이 바뀐 행만 update (삭제 없음)
+2. anomaly: 같은 PK인데 이번 수집 본문해시 ≠ DB 저장값 → 이력 insert (bas 변경 전)
+3. bas 반영
+   - full: bas 3종 TRUNCATE 후 이번 수집 성공분 insert (수집 실패한 법령은 빠짐)
+   - incr: UPSERT (값이 바뀐 행만 update) + 새 현행이 들어온 법령의 이전 '현행' 행을 '연혁'으로
 4. amendment: 같은 조(항)의 인접 연혁끼리 본문해시가 다르면 이력 insert
-5. 이번에 새로 들어간 이력을 `{logs_path}/{ymd}/load_hst_*.log`에 건별 기록
+5. 수집 실패: `tb_law_clct_fail_hst`에 기록 (같은 수집일자·구분으로 재적재하면 교체)
+6. 이번에 새로 들어간 이력을 `{logs_path}/{ymd}/load_hst_*.log`에 건별 기록
 
 이력 insert는 `ON CONFLICT DO NOTHING`이라 반복 실행해도 새로 생긴 이력만 들어간다.
-실패 시 전체 ROLLBACK.
+개정이력·수집실패 테이블은 TRUNCATE 하지 않는다. 실패 시 전체 ROLLBACK.
+
+### 중단 조건 (DB 변경 없이 종료)
+
+- 목록 조회 실패 (totalCnt 또는 페이지 하나라도 실패)
+- 본문 연속 실패 500건 (`law_detail.MAX_CONSECUTIVE_FAIL`)
+- full 적재 시 이번 수집 법령 수 < 기존의 90% (`load_csv.FULL_MIN_RATIO`)
 
 ## 운영 주의
 
@@ -60,5 +84,6 @@ common/              config, 로거, CSV writer, HTTP, XML 파싱, 해시·태�
   이력 PK 해시(재료 순서·`|` 구분자·NULL→'')는 운영 적재 시작 후 바꾸면 안 된다.
   바꾸면 전 조·항이 변경으로 오탐되고 이력이 중복으로 쌓인다.
 - 최초 적재 시 전체 연혁의 인접 쌍이 amendment로 한꺼번에 기록된다. 이때 detected_dt는 실제 개정 시점이 아니다.
-- 변경분만 수집하면 anomaly는 감지되지 않는다 (full 수집 필요).
+- 증분 수집으로는 anomaly가 거의 감지되지 않는다 (본문이 안 바뀐 법령은 조회되지 않음). 주 1회 전체 수집에서 감지.
+- full 적재는 bas 3종을 다시 넣으므로 inpt_dt가 매주 실행 시각으로 바뀐다.
 - DB timezone이 UTC면 inpt_dt / chg_dt / detected_dt가 KST와 9시간 어긋난다 (precheck가 경고).
