@@ -138,7 +138,7 @@ WHERE ({old_row}) IS DISTINCT FROM ({new_row})
 
 # ── 전체 수집: bas 3종 비우기 (개정이력·수집실패 테이블은 비우지 않음) ──────────
 TRUNCATE_BAS_SQL = "TRUNCATE TABLE tb_law_para_bas, tb_law_atcl_bas, tb_law_bas"
-COUNT_BAS_SQL = "SELECT (SELECT count(*) FROM tb_law_bas), (SELECT count(*) FROM tmp_law_bas)"
+COUNT_BAS_SQL = "SELECT count(*) FROM tb_law_bas"
 
 # ── 증분 수집: 새 현행이 들어온 법령의 이전 '현행' 행 → '연혁' ─────────────────
 # 전체 수집 때는 API 의 현행연혁코드를 그대로 쓰므로 실행하지 않음

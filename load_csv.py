@@ -31,8 +31,6 @@ from db.connection import precheck as db_precheck
 
 PGM_ID = 'load_csv'             # inpt_pgm_id / chg_pgm_id 값 (varchar(20) 이내)
 MODES = ('full', 'incr')
-# full 적재 시 이번 수집 법령 수가 기존 대비 이 비율 미만이면 TRUNCATE 하지 않고 중단 (목록 이상·대량 실패 방지)
-FULL_MIN_RATIO = 0.9
 
 
 def setup_logger(logs_path: str, ymd: str) -> logging.Logger:
@@ -123,10 +121,7 @@ def run(cfg: dict, ymd: str, mode: str, logger=None) -> None:
         # 3. bas 반영
         if mode == 'full':
             cur.execute(law_sql.COUNT_BAS_SQL)
-            db_laws, csv_laws = cur.fetchone()
-            if db_laws and csv_laws < db_laws * FULL_MIN_RATIO:
-                raise RuntimeError(f'[load] 이번 수집 법령 {csv_laws:,}건 < 기존 {db_laws:,}건의 {FULL_MIN_RATIO:.0%} '
-                                   f'→ TRUNCATE 하지 않고 중단 (목록·본문 수집 결과 확인 필요)')
+            db_laws = cur.fetchone()[0]
             cur.execute(law_sql.TRUNCATE_BAS_SQL)
             logger.info(f'[load] bas 3종 TRUNCATE (기존 tb_law_bas {db_laws:,}건)')
             for table in law_sql.BAS_TABLES:

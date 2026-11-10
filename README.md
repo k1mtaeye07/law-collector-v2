@@ -76,7 +76,6 @@ common/              config, 로거, CSV writer, HTTP, XML 파싱, 해시·태�
 
 - 목록 조회 실패 (totalCnt 또는 페이지 하나라도 실패)
 - 본문 연속 실패 500건 (`law_detail.MAX_CONSECUTIVE_FAIL`)
-- full 적재 시 이번 수집 법령 수 < 기존의 90% (`load_csv.FULL_MIN_RATIO`)
 
 ## 운영 주의
 
