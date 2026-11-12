@@ -14,7 +14,7 @@ from tqdm import tqdm
 from common.csv_writer import CsvWriter
 from common.http_client import fetch_xml, make_async_client, RETRYABLE
 from common.logger import JobLogger
-from common.utils import ctxt_hash, extract_amnd_info, fmt_elapsed
+from common.utils import ctxt_hash, extract_amnd_info, fmt_elapsed, run_dir
 from common.xml_parser import (
     convert_circled_number, get_tag, get_tag_attr_and_value,
     get_tag_value, make_brch_no, parse_xml_string,
@@ -301,8 +301,8 @@ MAX_CONSECUTIVE_FAIL = 500       # 연속 실패가 이만큼 쌓이면 중단 (
 
 
 # ── 메인 실행 ────────────────────────────────────────────────────────────────
-async def run(cfg: dict, ymd: str, logger: JobLogger, test_urls: list = None):
-    csv_dir = Path(cfg['csv_path']) / ymd
+async def run(cfg: dict, ymd: str, mode: str, logger: JobLogger, test_urls: list = None):
+    csv_dir = run_dir(cfg['csv_path'], ymd, mode)
     csv_dir.mkdir(parents=True, exist_ok=True)
 
     if test_urls:

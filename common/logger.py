@@ -1,11 +1,11 @@
 import logging
 from datetime import datetime
-from pathlib import Path
+from common.utils import run_dir
 
 
 class JobLogger:
-    def __init__(self, logs_path: str, ymd: str, task: str = ''):
-        self._log_dir = Path(logs_path) / ymd
+    def __init__(self, logs_path: str, ymd: str, mode: str, task: str = ''):
+        self._log_dir = run_dir(logs_path, ymd, mode)
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
         prefix = f'{task}_' if task else ''
@@ -18,7 +18,7 @@ class JobLogger:
         )
 
         fmt = logging.Formatter('[%(asctime)s] %(levelname)s %(message)s', '%Y-%m-%d %H:%M:%S')
-        logger_name = f'law.{ymd}.{task}' if task else f'law.{ymd}'
+        logger_name = f'law.{ymd}.{mode}.{task}' if task else f'law.{ymd}.{mode}'
         self._logger = logging.getLogger(logger_name)
         if not self._logger.handlers:
             sh = logging.StreamHandler()

@@ -9,8 +9,8 @@
 cp config.yml.sample config.yml          # 환경별 값 수정
 python main.py all        <env>                              # 전체: DB점검 → law_list → law_detail → load full
 python main.py incr       <env> --efyd YYYYMMDD~YYYYMMDD     # 증분: 시행일자 범위의 연혁만 수집 → load incr
-python main.py law_list   <env> [--efyd YYYYMMDD~YYYYMMDD]   # 법령 목록 → law_list CSV
-python main.py law_detail <env>                              # 법령 본문 → tb_law_* CSV (+ 수집실패 CSV)
+python main.py law_list   <env> [--efyd YYYYMMDD~YYYYMMDD]   # 법령 목록 → law_list CSV (--efyd 있으면 incr 폴더)
+python main.py law_detail <env> --mode full|incr             # 법령 본문 → tb_law_* CSV (+ 수집실패 CSV)
 python main.py load       <env> --mode full|incr [--ymd YYYYMMDD]   # CSV → DB (기본: 오늘 CSV)
 
 # 백그라운드 실행 (터미널 끊겨도 계속)
@@ -30,7 +30,8 @@ nohup python3 main.py all <env> > all_$(date +%Y%m%d_%H%M).out 2>&1 &
 
 금요일 증분이 끝나기 전에 토요일 전체가 시작되지 않도록 간격을 둔다.
 
-- 출력: `{csv_path}/{실행일}/*.csv`, 로그: `{logs_path}/{실행일}/`
+- 출력: `{csv_path}/{실행일}/{full|incr}/*.csv`, 로그: `{logs_path}/{실행일}/{full|incr}/`
+- 실행할 때마다 어제 이전 날짜의 CSV 폴더(full·incr 모두)는 삭제된다. 로그는 남는다.
 - 필요 패키지: httpx, tenacity, tqdm, pyyaml, psycopg2 (lxml 있으면 사용)
 
 ## 구조
@@ -67,7 +68,7 @@ common/              config, 로거, CSV writer, HTTP, XML 파싱, 해시·태�
    - incr: UPSERT (값이 바뀐 행만 update) + 새 현행이 들어온 법령의 이전 '현행' 행을 '연혁'으로
 4. amendment: 같은 조(항)의 인접 연혁끼리 본문해시가 다르면 이력 insert
 5. 수집 실패: `tb_law_clct_fail_hst`에 기록 (같은 수집일자·구분으로 재적재하면 교체)
-6. 이번에 새로 들어간 이력을 `{logs_path}/{ymd}/load_hst_*.log`에 건별 기록
+6. 이번에 새로 들어간 이력을 `{logs_path}/{ymd}/{mode}/load_hst_*.log`에 건별 기록
 
 이력 insert는 `ON CONFLICT DO NOTHING`이라 반복 실행해도 새로 생긴 이력만 들어간다.
 개정이력·수집실패 테이블은 TRUNCATE 하지 않는다. 실패 시 전체 ROLLBACK.

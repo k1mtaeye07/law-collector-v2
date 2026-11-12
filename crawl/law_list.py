@@ -1,12 +1,12 @@
 import re
 import requests
-from pathlib import Path
 from urllib.parse import urlparse
 
 from tqdm import tqdm
 
 from common.csv_writer import CsvWriter
 from common.logger import JobLogger
+from common.utils import run_dir
 from common.xml_parser import parse_xml_string, get_list_tag_value
 
 LAW_TG = 'eflaw'
@@ -44,12 +44,12 @@ def _adjust_url(url: str, base_url: str) -> str:
     return url
 
 
-def run(cfg: dict, ymd: str, logger: JobLogger, efyd: str = None):
+def run(cfg: dict, ymd: str, mode: str, logger: JobLogger, efyd: str = None):
     """efyd 지정 시 시행일자 범위(YYYYMMDD~YYYYMMDD)에 해당하는 연혁만 조회 (증분 수집)"""
     api_list_url = cfg['api_list_url']
     api_con_path = cfg['api_con_path']
     verify_ssl = (cfg['env'] != 'dev')
-    csv_dir = Path(cfg['csv_path']) / ymd
+    csv_dir = run_dir(cfg['csv_path'], ymd, mode)
     csv_dir.mkdir(parents=True, exist_ok=True)
 
     writer = CsvWriter('law_list', csv_dir, HEADERS, cfg['batch_size'], logger=logger)

@@ -7,12 +7,12 @@ CSV → PostgreSQL 적재 (법령)
   incr : 증분 수집분. bas 3종 UPSERT + 새 현행이 들어온 법령의 이전 '현행' 행을 '연혁'으로
 
 단일 트랜잭션 (실패 시 전체 ROLLBACK → 기존 데이터 그대로):
-  1. {csv_path}/{ymd}/tb_law_*.csv → 임시테이블 (전 컬럼 text)
+  1. {csv_path}/{ymd}/{mode}/tb_law_*.csv → 임시테이블 (전 컬럼 text)
   2. anomaly   : 임시테이블 vs 기존 bas 본문해시 비교 → 이력 insert   (bas 를 바꾸기 전에 해야 함)
   3. bas 반영  : full = TRUNCATE + INSERT / incr = UPSERT(값이 바뀐 행만 UPDATE) + 이전 현행 → 연혁
   4. amendment : bas 전체에서 같은 조(항) 인접 연혁 본문해시 비교 → 이력 insert
   5. 수집 실패 : tb_law_clct_fail_hst 에 기록 (같은 수집일자·구분 재적재 시 교체)
-  6. 이번에 새로 들어간 이력을 건별로 {logs_path}/{ymd}/load_hst_*.log 에 기록 (탭 구분)
+  6. 이번에 새로 들어간 이력을 건별로 {logs_path}/{ymd}/{mode}/load_hst_*.log 에 기록 (탭 구분)
   개정이력 insert 는 ON CONFLICT DO NOTHING (멱등). 개정이력·수집실패 테이블은 TRUNCATE 하지 않음
 SQL 은 db/law_sql.py, 접속·점검은 db/connection.py
 """
@@ -24,17 +24,16 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from common.utils import fmt_elapsed
+from common.utils import fmt_elapsed, run_dir
 from db import law_sql
 from db.connection import connect
 from db.connection import precheck as db_precheck
 
 PGM_ID = 'load_csv'             # inpt_pgm_id / chg_pgm_id 값 (varchar(20) 이내)
-MODES = ('full', 'incr')
 
 
-def setup_logger(logs_path: str, ymd: str) -> logging.Logger:
-    log_dir = Path(logs_path) / ymd
+def setup_logger(logs_path: str, ymd: str, mode: str) -> logging.Logger:
+    log_dir = run_dir(logs_path, ymd, mode)
     log_dir.mkdir(parents=True, exist_ok=True)
     dt = datetime.now().strftime('%Y%m%d_%H%M%S')
     logger = logging.getLogger(f'load.{dt}')
@@ -73,11 +72,9 @@ def _write_hst_log(conn, path: Path) -> int:
 
 
 def run(cfg: dict, ymd: str, mode: str, logger=None) -> None:
-    if mode not in MODES:
-        raise ValueError(f'mode 는 {MODES} 중 하나: {mode}')
     if logger is None:
-        logger = setup_logger(cfg['logs_path'], ymd)
-    csv_dir = Path(cfg['csv_path']) / ymd
+        logger = setup_logger(cfg['logs_path'], ymd, mode)
+    csv_dir = run_dir(cfg['csv_path'], ymd, mode)       # mode 값 검사 포함
 
     files = {}
     for table in law_sql.CSV_TABLES:
@@ -85,7 +82,7 @@ def run(cfg: dict, ymd: str, mode: str, logger=None) -> None:
         if not files[table]:
             raise FileNotFoundError(f'CSV 없음: {csv_dir}/{table}_????_{ymd}.csv')
 
-    log_dir = Path(cfg['logs_path']) / ymd
+    log_dir = run_dir(cfg['logs_path'], ymd, mode)
     hst_log = log_dir / f"load_hst_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     hst_tmp = hst_log.with_suffix('.tmp')
     params = {'pgm_id': PGM_ID, 'clct_ymd': ymd, 'clct_dvs_nm': mode}

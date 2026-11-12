@@ -1,6 +1,16 @@
 import hashlib
 import re
 import unicodedata
+from pathlib import Path
+
+MODES = ('full', 'incr')          # full: 전체 수집(토요일) / incr: 증분 수집(시행일자 범위)
+
+
+def run_dir(base: str, ymd: str, mode: str) -> Path:
+    """실행 단위 폴더: {base}/{실행일}/{full|incr}  (CSV·로그 공통)"""
+    if mode not in MODES:
+        raise ValueError(f'mode 는 {MODES} 중 하나: {mode}')
+    return Path(base) / ymd / mode
 
 
 def fmt_elapsed(seconds: float) -> str:

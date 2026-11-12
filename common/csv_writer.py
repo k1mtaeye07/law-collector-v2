@@ -9,23 +9,24 @@ from pathlib import Path
 
 def _cleanup_old_csv(csv_dir: Path, today: str) -> int:
     """
-    csv_dir 날짜 디렉토리(YYYYMMDD) 중 어제까지 csv디렉토리를 삭제한다. 삭제 후 파일 수 반환.
-    구조: {csv_path}/{ymd}/  →  csv_dir.parent = {csv_path}/
+    날짜 디렉토리(YYYYMMDD) 중 어제까지의 CSV 를 삭제한다 (full/incr 하위 포함). 삭제 후 파일 수 반환.
+    구조: {csv_path}/{ymd}/{full|incr}/  →  csv_dir.parent.parent = {csv_path}/
     """
     deleted = 0
-    base = csv_dir.parent  # {csv_path}/
+    base = csv_dir.parent.parent  # {csv_path}/
     for vol_dir in base.iterdir():
         if not vol_dir.is_dir():
             continue
         name = vol_dir.name
         if name.isdigit() and len(name) == 8 and name < today:
-            for f in vol_dir.glob('*.csv'):
+            for f in vol_dir.rglob('*.csv'):
                 f.unlink()
                 deleted += 1
-            try:
-                vol_dir.rmdir()  # CSV 삭제 후 디렉토리가 비었으면 제거
-            except OSError:
-                pass             # 로그 파일 등 다른 파일이 남아있으면 그냥 두기
+            for d in sorted(vol_dir.rglob('*'), reverse=True) + [vol_dir]:
+                try:
+                    d.rmdir()    # CSV 삭제 후 비었으면 제거 (하위 폴더부터)
+                except OSError:
+                    pass         # 다른 파일이 남아있으면 그냥 두기
     return deleted
 
 
