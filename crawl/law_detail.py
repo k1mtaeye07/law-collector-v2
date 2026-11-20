@@ -191,8 +191,6 @@ def parse_law_atcl(root, b: dict) -> list:
         jomun_ser_no = get_tag(jomun, '조문가지번호')
         jomun_yn     = get_tag(jomun, '조문여부')
         jomun_chg_yn = get_tag(jomun, '조문변경여부')
-        jomun_title  = get_tag(jomun, '조문제목')
-        jomun_title  = f'({jomun_title})' if jomun_title else ''
         jomun_ref    = get_tag(jomun, '조문참고자료')   # [본조신설 ..] [제목개정 ..] 등. 본문엔 미포함, 태그 추출에만 사용
 
         law_brch_no = make_brch_no(jomun_no, jomun_ser_no)
@@ -202,7 +200,7 @@ def parse_law_atcl(root, b: dict) -> list:
             atcl_ctxt = '\n'.join([jomun_con] + _build_hang_ho_mok(jomun))
             result.setdefault(law_brch_no, {
                 'atcl_no': int(law_brch_no[:4]), 'atcl_dvs_nm': jomun_yn,
-                'atcl_title': ' '.join(filter(None, [b['law_kor_nm'], jo_con_no, jomun_title])),
+                'atcl_title': ' '.join(filter(None, [b['law_kor_nm'], jo_con_no])),
                 'atcl_ctxt': atcl_ctxt, 'atcl_chg_yn': jomun_chg_yn, 'jomun_ref': jomun_ref,
             })
         elif len(jomun_list) == 1:           # v1 동일: 조문단위 1개뿐인 법령은 0000000 으로 적재
@@ -241,8 +239,6 @@ def parse_law_para(root, b: dict) -> list:
         jomun_con    = get_tag(jomun, '조문내용')
         jomun_yn     = get_tag(jomun, '조문여부')
         jomun_chg_yn = get_tag(jomun, '조문변경여부')
-        jomun_title  = get_tag(jomun, '조문제목')
-        jomun_title  = f'({jomun_title})' if jomun_title else ''
         jomun_ref    = get_tag(jomun, '조문참고자료')   # [본조신설 ..] [제목개정 ..] 등. 본문엔 미포함, 태그 추출에만 사용
 
         law_brch_no = make_brch_no(jomun_no, jomun_ser_no)
@@ -272,7 +268,7 @@ def parse_law_para(root, b: dict) -> list:
                 para_ctxt = '\r\n'.join(filter(None, [jomun_con, own]))
                 result.setdefault((law_brch_no_val, int(para_no)), {
                     'atcl_no': atcl_no_val,
-                    'para_title': ' '.join(filter(None, [b['law_kor_nm'], jo_con_no_val, para_no_nm, jomun_title])),
+                    'para_title': ' '.join(filter(None, [b['law_kor_nm'], jo_con_no_val, para_no_nm])),
                     'para_ctxt': para_ctxt, 'para_ctxt_hsid': ctxt_hash(own),
                     'atcl_chg_yn': jomun_chg_yn, 'jomun_ref': jomun_ref,
                 })
