@@ -39,8 +39,8 @@ TB_LAW_PARA_BAS_HEADERS = [
     'SUPP_PROV_CTXT', 'SUPP_PROV_PRMLGT_YMD', 'SUPP_PROV_PRMLGT_NO',
     'AMND_YMD', 'AMND_TYP_NM',
 ]
-# 본문 수집 실패 → 적재 시 tb_law_clct_fail_hst 에 기록 (수집구분·수집일자는 적재 단계에서 채움)
-TB_LAW_CLCT_FAIL_HST_HEADERS = [
+# 본문 수집 실패 → 적재 시 tb_law_clct_fail 에 반영 (수집구분·수집일자는 적재 단계에서 채움)
+TB_LAW_CLCT_FAIL_HEADERS = [
     'LAW_ENFC_ID', 'LAW_SEQ', 'ENFC_YMD', 'LAW_ID', 'LAW_KOR_NM', 'URL_PATH_NM', 'ERR_NM', 'ERR_CTXT',
 ]
 
@@ -318,7 +318,7 @@ async def run(cfg: dict, ymd: str, mode: str, logger: JobLogger, test_urls: list
         'tb_law_bas':      CsvWriter('tb_law_bas',      csv_dir, TB_LAW_BAS_HEADERS,      cfg['batch_size'], ymd, logger),
         'tb_law_atcl_bas': CsvWriter('tb_law_atcl_bas', csv_dir, TB_LAW_ATCL_BAS_HEADERS, cfg['batch_size'], ymd, logger),
         'tb_law_para_bas': CsvWriter('tb_law_para_bas', csv_dir, TB_LAW_PARA_BAS_HEADERS, cfg['batch_size'], ymd, logger),
-        'tb_law_clct_fail_hst': CsvWriter('tb_law_clct_fail_hst', csv_dir, TB_LAW_CLCT_FAIL_HST_HEADERS, cfg['batch_size'], ymd, logger),
+        'tb_law_clct_fail': CsvWriter('tb_law_clct_fail', csv_dir, TB_LAW_CLCT_FAIL_HEADERS, cfg['batch_size'], ymd, logger),
     }
 
     fail_list = []
@@ -391,7 +391,7 @@ async def run(cfg: dict, ymd: str, mode: str, logger: JobLogger, test_urls: list
 
                     except Exception as exc:
                         fail_list.append(meta)
-                        writers['tb_law_clct_fail_hst'].put([
+                        writers['tb_law_clct_fail'].put([
                             meta['law_enfc_id'], meta['law_seq'], meta['enfc_ymd'], meta['law_id'],
                             meta['law_kor_nm'], meta['url_path_nm'], type(exc).__name__, str(exc),
                         ])

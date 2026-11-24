@@ -1,12 +1,12 @@
 """
-법령 테이블 정의와 적재 SQL (tb_law_bas / tb_law_atcl_bas / tb_law_para_bas / tb_law_*_amnd_hst)
+법령 테이블 정의와 적재 SQL (tb_law_bas / tb_law_atcl_bas / tb_law_para_bas / tb_law_*_amnd_hst / tb_law_clct_fail)
 
 - 임시테이블(tmp_law_*): CSV 를 그대로 받는 세션 전용 테이블 (전 컬럼 text, COMMIT 시 자동 삭제)
 - 프로그램ID 는 실행 시 파라미터 %(pgm_id)s 로 전달
 """
 from __future__ import annotations
 
-from crawl.law_detail import (TB_LAW_ATCL_BAS_HEADERS, TB_LAW_BAS_HEADERS, TB_LAW_CLCT_FAIL_HST_HEADERS,
+from crawl.law_detail import (TB_LAW_ATCL_BAS_HEADERS, TB_LAW_BAS_HEADERS, TB_LAW_CLCT_FAIL_HEADERS,
                               TB_LAW_PARA_BAS_HEADERS)
 
 COMMON_COLS = ['inpt_pgm_id', 'inpt_dt', 'chg_pgm_id', 'chg_dt']
@@ -37,14 +37,15 @@ BAS_TABLES = {
     },
 }
 
-# 수집 실패 이력 (CSV → 임시테이블 → insert. clct_ymd·clct_dvs_nm 은 적재 시 파라미터로)
-FAIL_TABLE = 'tb_law_clct_fail_hst'
+# 수집 실패 대상 (law_enfc_id 당 1행: 성공하면 삭제, 계속 실패하면 최종실패일자·오류만 갱신)
+#   clct_ymd·clct_dvs_nm 은 적재 시 파라미터로. 최초 실패 = inpt_dt, 최종 실패 = clct_ymd / chg_dt
+FAIL_TABLE = 'tb_law_clct_fail'
 FAIL_SPEC = {
     'tmp': 'tmp_law_clct_fail',
-    'csv_cols': [c.lower() for c in TB_LAW_CLCT_FAIL_HST_HEADERS],
-    'pk': [],
+    'csv_cols': [c.lower() for c in TB_LAW_CLCT_FAIL_HEADERS],
+    'pk': ['law_enfc_id'],
     'int_cols': ['law_seq'],
-    'nn_cols': ['url_path_nm'],
+    'nn_cols': ['law_enfc_id', 'url_path_nm'],
 }
 FAIL_COLS = ['clct_ymd', 'clct_dvs_nm'] + FAIL_SPEC['csv_cols']
 
@@ -66,7 +67,7 @@ def expected_columns() -> dict:
         exp[table] = [c for c in t['csv_cols'] if c not in CSV_ONLY_COLS] + COMMON_COLS
     exp['tb_law_atcl_amnd_hst'] = HST_ATCL_COLS + COMMON_COLS
     exp['tb_law_para_amnd_hst'] = HST_PARA_COLS + COMMON_COLS
-    exp[FAIL_TABLE] = ['clct_fail_sn'] + FAIL_COLS + COMMON_COLS
+    exp[FAIL_TABLE] = FAIL_COLS + COMMON_COLS
     return exp
 
 
@@ -150,13 +151,41 @@ WHERE b.crnt_law_nm = '현행'
   AND b.law_enfc_id NOT IN (SELECT law_enfc_id FROM tmp_law_bas WHERE crnt_law_nm = '현행')
 """
 
-# ── 수집 실패 기록 (같은 수집일자·구분으로 재적재하면 이전 기록을 지우고 다시 넣음) ──
-DELETE_FAIL_SQL = f"DELETE FROM {FAIL_TABLE} WHERE clct_ymd = %(clct_ymd)s AND clct_dvs_nm = %(clct_dvs_nm)s"
-INSERT_FAIL_SQL = f"""
+# ── 수집 실패 대상 반영 ───────────────────────────────────────────────────────
+# 해소(삭제)
+#   full : 이번에 실패하지 않은 건 전부 = 성공했거나 API 목록에서 없어진 건
+#          (목록 조회가 하나라도 실패하면 적재 전에 중단되므로, full 적재 시점의 목록은 완전함)
+#   incr : 이번에 수집에 성공한 건만 (incr 대상이 아닌 기존 실패 건은 그대로 둠)
+RESOLVE_FAIL_FULL_SQL = f"""
+DELETE FROM {FAIL_TABLE} f
+WHERE NOT EXISTS (SELECT 1 FROM {FAIL_SPEC['tmp']} s WHERE s.law_enfc_id = f.law_enfc_id)
+"""
+RESOLVE_FAIL_INCR_SQL = f"""
+DELETE FROM {FAIL_TABLE} f
+WHERE EXISTS (SELECT 1 FROM tmp_law_bas s WHERE s.law_enfc_id = f.law_enfc_id)
+"""
+COUNT_NEW_FAIL_SQL = f"""
+SELECT count(*) FROM {FAIL_SPEC['tmp']} s
+WHERE NOT EXISTS (SELECT 1 FROM {FAIL_TABLE} f WHERE f.law_enfc_id = s.law_enfc_id)
+"""
+# 신규 실패 insert / 기존 실패는 최종실패일자·구분·오류만 갱신 (inpt_dt = 최초 실패 일시 유지)
+UPSERT_FAIL_SQL = f"""
 INSERT INTO {FAIL_TABLE} ({', '.join(FAIL_COLS)}, inpt_pgm_id, chg_pgm_id)
 SELECT %(clct_ymd)s, %(clct_dvs_nm)s, {', '.join(_cast(c, FAIL_SPEC['int_cols']) for c in FAIL_SPEC['csv_cols'])},
        %(pgm_id)s, %(pgm_id)s
 FROM {FAIL_SPEC['tmp']} s
+ON CONFLICT (law_enfc_id) DO UPDATE SET
+    clct_ymd    = EXCLUDED.clct_ymd,
+    clct_dvs_nm = EXCLUDED.clct_dvs_nm,
+    law_seq     = EXCLUDED.law_seq,
+    enfc_ymd    = EXCLUDED.enfc_ymd,
+    law_id      = EXCLUDED.law_id,
+    law_kor_nm  = EXCLUDED.law_kor_nm,
+    url_path_nm = EXCLUDED.url_path_nm,
+    err_nm      = EXCLUDED.err_nm,
+    err_ctxt    = EXCLUDED.err_ctxt,
+    chg_pgm_id  = EXCLUDED.chg_pgm_id,
+    chg_dt      = now()
 """
 
 
@@ -264,6 +293,5 @@ UNION ALL SELECT 'tb_law_atcl_bas', count(*) FROM tb_law_atcl_bas
 UNION ALL SELECT 'tb_law_para_bas', count(*) FROM tb_law_para_bas
 UNION ALL SELECT 'tb_law_atcl_amnd_hst(' || amnd_rsn_cd_nm || ')', count(*) FROM tb_law_atcl_amnd_hst GROUP BY amnd_rsn_cd_nm
 UNION ALL SELECT 'tb_law_para_amnd_hst(' || amnd_rsn_cd_nm || ')', count(*) FROM tb_law_para_amnd_hst GROUP BY amnd_rsn_cd_nm
-UNION ALL SELECT 'tb_law_clct_fail_hst(' || clct_dvs_nm || ' ' || clct_ymd || ')', count(*) FROM tb_law_clct_fail_hst
-          WHERE clct_ymd = %(clct_ymd)s AND clct_dvs_nm = %(clct_dvs_nm)s GROUP BY clct_dvs_nm, clct_ymd
+UNION ALL SELECT 'tb_law_clct_fail(미해소 전체)', count(*) FROM tb_law_clct_fail
 """

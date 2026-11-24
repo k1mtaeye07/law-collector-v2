@@ -55,7 +55,7 @@ common/              config, 로거, CSV writer, HTTP, XML 파싱, 해시·태�
 | tb_law_para_bas | law_enfc_id, law_brch_no, para_no | 항 |
 | tb_law_atcl_amnd_hst | law_atcl_hsid | 조 개정이력 |
 | tb_law_para_amnd_hst | law_para_hsid | 항 개정이력 |
-| tb_law_clct_fail_hst | clct_fail_sn | 본문 수집 실패 이력 (DDL: `db/ddl/tb_law_clct_fail_hst.sql`, 명칭은 DBA 확정 필요) |
+| tb_law_clct_fail | law_enfc_id | 본문 수집 실패 대상 (DDL: `db/ddl/tb_law_clct_fail.sql`). 성공하면 삭제, 계속 실패하면 최종실패일자·오류만 갱신 |
 
 공통 컬럼: inpt_pgm_id, inpt_dt, chg_pgm_id, chg_dt (프로그램ID = DB에 쓰는 파일명, 확장자 제외. 예: load_csv)
 
@@ -67,7 +67,7 @@ common/              config, 로거, CSV writer, HTTP, XML 파싱, 해시·태�
    - full: bas 3종 TRUNCATE 후 이번 수집 성공분 insert (수집 실패한 법령은 빠짐)
    - incr: UPSERT (값이 바뀐 행만 update) + 새 현행이 들어온 법령의 이전 '현행' 행을 '연혁'으로
 4. amendment: 같은 조(항)의 인접 연혁끼리 본문해시가 다르면 이력 insert
-5. 수집 실패: `tb_law_clct_fail_hst`에 기록 (같은 수집일자·구분으로 재적재하면 교체)
+5. 수집 실패: `tb_law_clct_fail` 반영 — 해소 삭제(full = 이번에 실패하지 않은 건 전부 / incr = 이번에 성공한 건) 후 이번 실패 upsert (최초 실패 = inpt_dt, 최종 실패 = clct_ymd)
 6. 이번에 새로 들어간 이력을 `{logs_path}/{ymd}/{mode}/load_hst_*.log`에 건별 기록
 
 이력 insert는 `ON CONFLICT DO NOTHING`이라 반복 실행해도 새로 생긴 이력만 들어간다.

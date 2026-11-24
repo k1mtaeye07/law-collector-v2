@@ -11,7 +11,9 @@ CSV → PostgreSQL 적재 (법령)
   2. anomaly   : 임시테이블 vs 기존 bas 본문해시 비교 → 이력 insert   (bas 를 바꾸기 전에 해야 함)
   3. bas 반영  : full = TRUNCATE + INSERT / incr = UPSERT(값이 바뀐 행만 UPDATE) + 이전 현행 → 연혁
   4. amendment : bas 전체에서 같은 조(항) 인접 연혁 본문해시 비교 → 이력 insert
-  5. 수집 실패 : tb_law_clct_fail_hst 에 기록 (같은 수집일자·구분 재적재 시 교체)
+  5. 수집 실패 : tb_law_clct_fail 반영 (law_enfc_id 당 1행)
+                 해소 삭제 → full = 이번에 실패하지 않은 건 전부 / incr = 이번에 성공한 건
+                 이번 실패 → 신규 insert, 기존 건은 최종실패일자(clct_ymd)·오류만 갱신 (inpt_dt = 최초 실패)
   6. 이번에 새로 들어간 이력을 건별로 {logs_path}/{ymd}/{mode}/load_hst_*.log 에 기록 (탭 구분)
   개정이력 insert 는 ON CONFLICT DO NOTHING (멱등). 개정이력·수집실패 테이블은 TRUNCATE 하지 않음
 SQL 은 db/law_sql.py, 접속·점검은 db/connection.py
@@ -139,13 +141,18 @@ def run(cfg: dict, ymd: str, mode: str, logger=None) -> None:
         cur.execute(law_sql.AMENDMENT_PARA_SQL, params)
         logger.info(f'[load] tb_law_para_amnd_hst amendment 신규: {cur.rowcount:,}건')
 
-        # 5. 수집 실패 기록
-        cur.execute(law_sql.DELETE_FAIL_SQL, params)
-        cur.execute(law_sql.INSERT_FAIL_SQL, params)
+        # 5. 수집 실패 대상 반영 (해소 삭제 → 이번 실패 upsert)
+        cur.execute(law_sql.RESOLVE_FAIL_FULL_SQL if mode == 'full' else law_sql.RESOLVE_FAIL_INCR_SQL)
+        resolved = cur.rowcount
+        cur.execute(law_sql.COUNT_NEW_FAIL_SQL)
+        new_fail = cur.fetchone()[0]
+        cur.execute(law_sql.UPSERT_FAIL_SQL, params)
+        msg = (f'[load] {law_sql.FAIL_TABLE}: 이번 실패 {cur.rowcount:,}건 (신규 {new_fail:,} / 계속 실패 '
+               f'{cur.rowcount - new_fail:,}) | 해소 삭제 {resolved:,}건')
         if cur.rowcount:
-            logger.warning(f'[load] {law_sql.FAIL_TABLE}: 수집 실패 {cur.rowcount:,}건 기록 (이번 적재에서 제외됨)')
+            logger.warning(msg + ' (실패 건은 이번 적재에서 제외됨)')
         else:
-            logger.info(f'[load] {law_sql.FAIL_TABLE}: 수집 실패 0건')
+            logger.info(msg)
 
         # 6. 이번에 판별·적재된 이력 건별 기록 (COMMIT 성공 후에만 최종 파일명으로)
         n_log = _write_hst_log(conn, hst_tmp)
